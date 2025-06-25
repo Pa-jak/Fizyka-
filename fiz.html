@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Wahadło z dynamometrem – interaktywne</title>
+  <style>
+    :root {
+      --card-bg: #ffffff;
+      --radius: 10px;
+      --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      --blue: #0a84ff;
+      --green: #26a642;
+      --red: #d93025;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f4f8fb;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-bottom: 36px;
+    }
+    h1 { margin: 22px 0 18px; text-align: center; }
+
+    /* ===== Layout ===== */
+    #layout { display:flex; flex-wrap:wrap; gap:32px; justify-content:center; width:100%; max-width:1320px; padding:0 16px; }
+
+    /* ===== Canvas ===== */
+    #canvasWrap { flex:0 0 auto; }
+    canvas { background:#fff; border:1px solid #ccc; border-radius:var(--radius); }
+
+    /* ===== Panel ===== */
+    #panel { display:flex; flex-direction:column; gap:20px; min-width:345px; }
+    .card { background:var(--card-bg); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 20px; }
+
+    /* ===== Kontrolki ===== */
+    #controls label { display:block; margin-bottom:18px; }
+    .control-title { font-weight:600; margin-bottom:6px; display:flex; justify-content:space-between; }
+    .control-inputs { display:flex; gap:10px; align-items:center; }
+    input[type=range] { flex:1 1 auto; accent-color:var(--blue); }
+    input[type=number] { width:86px; padding:4px 6px; border:1px solid #ccc; border-radius:var(--radius); }
+    #resetBtn { width:100%; padding:12px 0; background:var(--green); color:#fff; border:none; border-radius:var(--radius); font-size:1rem; cursor:pointer; }
+    #resetBtn:hover { opacity:.93; }
+
+    /* ===== Statystyki ===== */
+    #statsGrid { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; }
+    .stats-label { font-weight:600; }
+    hr { border:none; border-top:1px solid #e0e0e0; margin:14px 0; }
+    .extreme { color:var(--blue); }
+    .extreme.min { color:var(--red); }
+  </style>
+</head>
+<body>
+  <h1>Wahadło z dynamometrem</h1>
+
+  <div id="layout">
+    <!-- Canvas -->
+    <div id="canvasWrap">
+      <canvas id="pendulum" width="600" height="500"></canvas>
+    </div>
+
+    <!-- Panel -->
+    <div id="panel">
+      <!-- Kontrolki -->
+      <div id="controls" class="card">
+        <label>
+          <div class="control-title">Długość wahadła (L): <span class="value-label" id="valL">1.50 m</span></div>
+          <div class="control-inputs">
+            <input type="range" id="sliderL" min="0.1" max="3" step="0.05" value="1.5"/>
+            <input type="number" id="numL" min="0.1" max="3" step="0.05" value="1.5"/>
+          </div>
+        </label>
+        <label>
+          <div class="control-title">Masa wahadła (m): <span class="value-label" id="valM">1.00 kg</span></div>
+          <div class="control-inputs">
+            <input type="range" id="sliderM" min="0.1" max="5" step="0.1" value="1"/>
+            <input type="number" id="numM" min="0.1" max="5" step="0.1" value="1"/>
+          </div>
+        </label>
+        <label>
+          <div class="control-title">Początkowy kąt (θ): <span class="value-label" id="valTheta">30°</span></div>
+          <div class="control-inputs">
+            <input type="range" id="sliderTheta" min="-90" max="90" step="1" value="30"/>
+            <input type="number" id="numTheta" min="-90" max="90" step="1" value="30"/>
+          </div>
+        </label>
+        <!-- Usunięto prędkość początkową -->
+        <button id="resetBtn">Resetuj symulację</button>
+      </div>
+
+      <!-- Odczyty -->
+      <div id="readouts" class="card">
+        <div id="statsGrid">
+          <div class="stats-label">Bieżący kąt:</div><div id="angle">0°</div>
+          <div class="stats-label">Wskazanie dynamometru:</div><div id="tension">0 N</div>
+          <div class="stats-label">Prędkość kątowa:</div><div id="omega">0 rad/s</div>
+          <div class="stats-label">Okres ruchu (szacowany):</div><div id="period">-- s</div>
+        </div>
+        <hr>
+        <h3>Wartości ekstremalne:</h3>
+        <div id="statsGrid">
+          <div class="stats-label">Max siła naciągu:</div><div class="extreme" id="maxTension">0 N</div>
+          <div class="stats-label">Min siła naciągu:</div><div class="extreme min" id="minTension">0 N</div>
+          <div class="stats-label">Max prędkość kątowa:</div><div class="extreme" id="maxOmega">0 rad/s</div>
+          <div class="stats-label">Max odchylenie:</div><div class="extreme" id="maxAngle">0°</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ===== Parametry początkowe ===== */
+    let L = 1.5;
+    let m = 1.0;
+    const g = 9.81;
+    let theta0 = 30 * Math.PI/180;
+    const omega0 = 0; // prędkość początkowa na stałe 0
+
+    /* ===== Zmienne dynamiczne ===== */
+    let theta = theta0;
+    let omega = omega0;
+    let prevTheta = theta;
+    let lastZero = null;
+    let period = null;
+    let running = true;
+
+    // ekstremalne
+    let maxAngle = Math.abs(theta);
+    let maxOmega = Math.abs(omega);
+    let maxTension = 0;
+    let minTension = Infinity;
+
+    /* ===== DOM ===== */
+    const canvas = document.getElementById('pendulum');
+    const ctx = canvas.getContext('2d');
+    const origin = {x: canvas.width/2, y: 60};
+
+    const sliders = { L:sliderL, M:sliderM, Theta:sliderTheta };
+    const nums    = { L:numL,    M:numM,    Theta:numTheta };
+    const labels  = { L:valL,    M:valM,    Theta:valTheta };
+
+    const angleTxt = document.getElementById('angle');
+    const tensionTxt = document.getElementById('tension');
+    const omegaTxt = document.getElementById('omega');
+    const periodTxt = document.getElementById('period');
+    const maxAngleTxt = document.getElementById('maxAngle');
+    const maxOmegaTxt = document.getElementById('maxOmega');
+    const maxTensionTxt = document.getElementById('maxTension');
+    const minTensionTxt = document.getElementById('minTension');
+
+    /* ===== Helper ===== */
+    function updateLabels(){
+      labels.L.textContent = parseFloat(nums.L.value).toFixed(2)+' m';
+      labels.M.textContent = parseFloat(nums.M.value).toFixed(2)+' kg';
+      labels.Theta.textContent = nums.Theta.value+'°';
+    }
+
+    ['L','M','Theta'].forEach(k=>{
+      sliders[k].addEventListener('input', ()=>{ nums[k].value = sliders[k].value; updateLabels(); });
+      nums[k].addEventListener('input', ()=>{ sliders[k].value = nums[k].value; updateLabels(); });
+    });
+    updateLabels();
+
+    /* ===== Rysowanie ===== */
+    const renderFactor = 0.65;
+    function draw(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      const pxPerM = (canvas.height-120)/L;
+      const Lpix = L*renderFactor*pxPerM;
+
+      const x = origin.x + Lpix*Math.sin(theta);
+      const y = origin.y + Lpix*Math.cos(theta);
+
+      ctx.beginPath();
+      ctx.moveTo(origin.x, origin.y);
+      ctx.lineTo(x,y);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#666';
+      ctx.stroke();
+
+      const midX = origin.x + (Lpix*0.5)*Math.sin(theta);
+      const midY = origin.y + (Lpix*0.5)*Math.cos(theta);
+      ctx.fillStyle = '#ff3b30';
+      ctx.fillRect(midX-15, midY-6, 30, 12);
+
+      ctx.beginPath();
+      ctx.arc(x,y,20,0,Math.PI*2);
+      ctx.fillStyle = '#007aff';
+      ctx.fill();
+    }
+
+    /* ===== Ruch ===== */
+    function step(dt){
+      const alpha = -(g/L)*Math.sin(theta);
+      omega += alpha*dt;
+      theta += omega*dt;
+
+      if(prevTheta<0 && theta>=0 && omega>0){
+        if(lastZero!==null){
+          period = ((performance.now()-lastZero)/1000).toFixed(2);
+        }
+        lastZero = performance.now();
+      }
+      prevTheta = theta;
+    }
+
+    /* ===== Animacja ===== */
+    let lastTime=null;
+    function animate(t){
+      if(running){
+        if(lastTime===null) lastTime=t;
+        const dt=Math.min((t-lastTime)/1000,0.03);
+        lastTime=t;
+        step(dt);
+        draw();
+
+        const tension = m*(g*Math.cos(theta)+L*omega*omega);
+        maxAngle = Math.max(maxAngle, Math.abs(theta));
+        maxOmega = Math.max(maxOmega, Math.abs(omega));
+        maxTension = Math.max(maxTension, tension);
+        minTension = Math.min(minTension, tension);
+
+        angleTxt.textContent = (theta*180/Math.PI).toFixed(2)+'°';
+        omegaTxt.textContent = omega.toFixed(2)+' rad/s';
+        tensionTxt.textContent = tension.toFixed(2)+' N';
+        periodTxt.textContent = period? period+' s':'--';
+        maxAngleTxt.textContent = (maxAngle*180/Math.PI).toFixed(2)+'°';
+        maxOmegaTxt.textContent = maxOmega.toFixed(2)+' rad/s';
+        maxTensionTxt.textContent = maxTension.toFixed(2)+' N';
+        minTensionTxt.textContent = minTension.toFixed(2)+' N';
+      }
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+    /* ===== Reset ===== */
+    resetBtn.addEventListener('click', ()=>{
+      L = parseFloat(nums.L.value);
+      m = parseFloat(nums.M.value);
+      theta0 = parseFloat(nums.Theta.value)*Math.PI/180;
+
+      theta = theta0;
+      omega = omega0; // zawsze 0
+      prevTheta = theta;
+      lastZero = null;
+      period = null;
+      maxAngle = Math.abs(theta);
+      maxOmega = Math.abs(omega);
+      maxTension = 0;
+      minTension = Infinity;
+    });
+  </script>
+</body>
+</html>
